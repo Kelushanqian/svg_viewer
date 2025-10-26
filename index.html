@@ -135,19 +135,16 @@
         text-align: center;
       }
       @media (max-width: 800px) {
-        .toolbar {
-          position: absolute;
-          right: 8px;
-          top: 72px;
-          z-index: 30;
-          width: 92%;
-          max-width: none;
-          border-radius: 10px;
-          padding: 10px;
+        header {
+          flex-direction: column;
+          justify-content: left;
         }
-        .viewer {
-          margin: 8px;
-          border-radius: 8px;
+        .controls-right {
+          margin-left: 0;
+        }
+        .main {
+          grid-template-columns: 1fr;
+          grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
         }
       }
     </style>
