@@ -1,503 +1,678 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
-<title>Simple SVG Viewer — Door 风格</title>
-<style>
-  :root{
-    --bg:#0f1115; --panel:#0b0c0f; --muted:#9aa0a6; --accent:#7cc4ff; --danger:#ff7b7b;
-  }
-  html,body{height:100%;margin:0;background:linear-gradient(180deg,#0b0c0f 0%, #0f1115 100%);color:#e6eef6;font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial;}
-  .app{display:flex;flex-direction:column;height:100vh;}
-  header{padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;gap:10px;align-items:center;background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent);}
-  h1{margin:0;font-size:15px;font-weight:600;}
-  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-  input[type="file"]{display:none;}
-  .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;color:var(--muted);font-size:13px;}
-  .primary{border-color:var(--accent);color:var(--accent)}
-  .danger{border-color:var(--danger);color:var(--danger)}
-  .main{flex:1;display:flex;overflow:hidden}
-  .viewer{flex:1;position:relative;background:#07080a;margin:12px;border-radius:10px;display:flex;align-items:center;justify-content:center;touch-action:none;}
-  .svg-wrap{transform-origin:0 0;will-change:transform;display:inline-block;}
-  .toolbar{width:300px;max-width:40%;min-width:200px;padding:12px;border-left:1px solid rgba(255,255,255,0.02);background:linear-gradient(90deg, rgba(255,255,255,0.01), transparent);overflow:auto;}
-  .row{margin-bottom:10px;}
-  label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
-  textarea{width:100%;height:120px;background:#050607;border:1px solid rgba(255,255,255,0.03);color:#dfeaf6;padding:8px;border-radius:6px;font-family:monospace;font-size:13px;}
-  .small{font-size:12px;color:var(--muted)}
-  .status{font-size:12px;color:var(--muted);margin-top:6px}
-  .hint{font-size:12px;color:#aab6c2;margin-top:8px}
-  .icon-btn{padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.03);background:transparent;color:var(--muted);cursor:pointer}
-  .controls-right{margin-left:auto;display:flex;gap:8px;align-items:center}
-  footer{padding:8px 12px;font-size:12px;color:var(--muted);border-top:1px solid rgba(255,255,255,0.02);text-align:center}
-  @media(max-width:800px){
-    .toolbar{position:absolute;right:8px;top:72px;z-index:30;width:92%;max-width:none;border-radius:10px;padding:10px}
-    .viewer{margin:8px;border-radius:8px}
-  }
-</style>
-</head>
-<body>
-<div class="app" id="app">
-  <header>
-    <h1>SVG Viewer — Door 轻量版</h1>
-    <div class="controls" id="controls">
-      <label class="btn primary" id="openFileBtn">选择文件<input id="fileInput" type="file" accept=".svg,image/svg+xml"></label>
-      <button class="btn" id="pasteBtn">粘贴 SVG 文本</button>
-      <input id="urlInput" class="btn" style="padding:8px 10px;min-width:160px" placeholder="粘贴 SVG 的 URL 并按回车" />
-      <div class="controls-right">
-        <button class="btn" id="zoomIn">放大</button>
-        <button class="btn" id="zoomOut">缩小</button>
-        <button class="btn" id="fitView">适应大小</button>
-        <button class="btn" id="toggleSource">查看源</button>
-      </div>
-    </div>
-  </header>
-
-  <div class="main">
-    <div class="viewer" id="viewer" aria-label="SVG viewing area">
-      <div id="placeholder" style="text-align:center;color:var(--muted);padding:20px;">
-        <div style="font-size:14px;margin-bottom:6px">把 SVG 文件拖进来、选择文件或粘贴/输入 URL</div>
-        <div class="small">支持触摸拖拽、双指缩放。会自动清理脚本与事件处理器。</div>
-      </div>
-      <div id="svgContainer" class="svg-wrap" style="display:none"></div>
-    </div>
-
-    <aside class="toolbar" id="toolbar">
-      <div class="row">
-        <label>源（可编辑）</label>
-        <textarea id="sourceArea" placeholder="SVG 源会显示在这里"></textarea>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn primary" id="loadSource">载入源</button>
-          <button class="btn" id="downloadClean">下载清理后 SVG</button>
-          <button class="btn" id="inlineImgs">尝试内联外部图片</button>
-          <button class="btn danger" id="clearBtn">清空</button>
-        </div>
-        <div class="status" id="status">状态：空闲</div>
-      </div>
-
-      <div class="row">
-        <label>提示</label>
-        <div class="hint">
-          - 若用 URL 加载，目标必须允许跨域或返回正确的 CORS 头，否则无法内联外部资源。<br>
-          - 本工具会移除 &lt;script&gt;、事件处理器（on...）以及 embedded JS。<br>
-          - 如果字体不对，作者没有嵌入字体或将文字转曲。<br>
-        </div>
-      </div>
-    </aside>
-  </div>
-
-  <footer>Built for you. 不温不火但靠得住。</footer>
-</div>
-
-<script>
-/* ======= SVG Viewer Core =======
-   Features:
-   - Load from file / paste / URL.
-   - Sanitize: remove script tags and on* attributes.
-   - Inline external <image href="..."> if CORS allows.
-   - Pan (single touch/mouse) and zoom (wheel / pinch).
-   - Show and edit source, then "load source" to render.
-   - Download cleaned SVG.
-*/
-
-const viewer = document.getElementById('viewer');
-const svgContainer = document.getElementById('svgContainer');
-const placeholder = document.getElementById('placeholder');
-const fileInput = document.getElementById('fileInput');
-const openFileBtn = document.getElementById('openFileBtn');
-const pasteBtn = document.getElementById('pasteBtn');
-const urlInput = document.getElementById('urlInput');
-const sourceArea = document.getElementById('sourceArea');
-const loadSource = document.getElementById('loadSource');
-const statusEl = document.getElementById('status');
-const downloadBtn = document.getElementById('downloadClean');
-const inlineImgsBtn = document.getElementById('inlineImgs');
-const clearBtn = document.getElementById('clearBtn');
-const toggleSourceBtn = document.getElementById('toggleSource');
-const zoomInBtn = document.getElementById('zoomIn');
-const zoomOutBtn = document.getElementById('zoomOut');
-const fitViewBtn = document.getElementById('fitView');
-
-let state = {
-  scale: 1,
-  tx: 0,
-  ty: 0,
-  minScale: 0.1,
-  maxScale: 20,
-  isPanning: false,
-  lastX: 0,
-  lastY: 0,
-  pointers: new Map(),
-  svgElement: null,
-  viewBox: null
-};
-
-function setStatus(t, warn=false){
-  statusEl.textContent = '状态：' + t;
-  statusEl.style.color = warn ? 'var(--danger)' : 'var(--muted)';
-}
-
-/* sanitization: remove script nodes and attributes starting with "on" */
-function sanitizeSVGDocument(doc){
-  // remove <script> and <foreignObject> (foreignObject may contain HTML/JS)
-  const scripts = doc.querySelectorAll('script');
-  scripts.forEach(n => n.remove());
-  const foreign = doc.querySelectorAll('foreignObject');
-  foreign.forEach(n => n.remove());
-
-  // remove attributes that start with "on"
-  const all = doc.querySelectorAll('*');
-  all.forEach(el=>{
-    [...el.attributes].forEach(attr=>{
-      if(/^on/i.test(attr.name)) el.removeAttribute(attr.name);
-      // remove javascript: hrefs
-      if(attr.value && typeof attr.value === 'string' && attr.value.trim().toLowerCase().startsWith('javascript:')){
-        el.removeAttribute(attr.name);
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,viewport-fit=cover"
+    />
+    <title>Simple SVG Viewer — Door 风格</title>
+    <style>
+      :root {
+        --bg: #a7bbc3;
+        --muted: #c886a2;
+        --accent: #ffffff;
       }
-    });
-  });
-
-  return doc;
-}
-
-/* parse text to SVGDocument */
-function parseSVGText(text){
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(text, 'image/svg+xml');
-  // check for parsererror
-  if(doc.querySelector('parsererror')) throw new Error('解析失败：不是合法的 SVG');
-  return doc;
-}
-
-/* render sanitized svg doc into viewer */
-function renderSVGDocument(doc){
-  const svg = doc.documentElement;
-  // reset transform state
-  state.scale = 1; state.tx = 0; state.ty = 0;
-  state.svgElement = svg;
-  // clear container
-  svgContainer.innerHTML = '';
-  svgContainer.style.display = 'inline-block';
-  // clone node to avoid weirdness
-  const imported = document.importNode(svg, true);
-  // ensure width/height or viewBox exists
-  if(!imported.hasAttribute('viewBox')){
-    // try set viewBox from width/height if present
-    const w = imported.getAttribute('width');
-    const h = imported.getAttribute('height');
-    if(w && h){
-      const wi = parseFloat(w); const hi = parseFloat(h);
-      if(!isNaN(wi) && !isNaN(hi)){
-        imported.setAttribute('viewBox', `0 0 ${wi} ${hi}`);
+      html,
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--accent);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+          "Helvetica Neue", Arial;
       }
-    }
-  }
-  svgContainer.appendChild(imported);
-  svgContainer.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
-  adjustFit();
-  placeholder.style.display = 'none';
-  setStatus('已加载');
-  sourceArea.value = (new XMLSerializer()).serializeToString(svg);
-}
+      .app {
+        padding: 0 20px;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      header {
+        padding: 5px;
+        border-bottom: 1px solid var(--accent);
+        display: flex;
+        gap: 10px;
+      }
+      h1 {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .controls {
+        flex: 1;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      input[type="file"] {
+        display: none;
+      }
+      .btn {
+        border-style: none;
+        background-color: var(--accent);
+        padding: 2px 10px;
+        line-height: 30px;
+        text-align: center;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .input {
+        border-style: none;
+        border-radius: 8px;
+        color: var(--muted);
+        padding: 10px 12px;
+      }
+      .main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+        gap: 10px;
+      }
+      .viewer {
+        flex: 1;
+        position: relative;
+        background: #d9d9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        touch-action: none;
+        border-right: 1px solid var(--accent);
+        user-select: none;
+      }
+      .svg-wrap {
+        will-change: transform;
+        display: inline-block;
+      }
+      .toolbar {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 8px 0;
+      }
+      .row {
+        display: flex;
+        flex-direction: column;
+      }
+      textarea {
+        color: var(--muted);
+        height: 150px;
+        background: #d9d9d9;
+        border: 1px solid var(--accent);
+        padding: 8px;
+        font-family: "Consolas", monospace;
+        font-size: 13px;
+        resize: none;
+      }
+      .small,
+      .status,
+      .hint {
+        font-size: 13px;
+        color: var(--accent);
+      }
+      .status {
+        margin-top: 8px;
+      }
+      .icon-btn {
+        padding: 6px;
+        border-radius: 6px;
+        border: 2px solid var(--accent);
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .controls-right {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      footer {
+        padding: 8px 12px;
+        font-size: 13px;
+        color: var(--accent);
+        border-top: 1px solid var(--accent);
+        text-align: center;
+      }
+      @media (max-width: 800px) {
+        .toolbar {
+          position: absolute;
+          right: 8px;
+          top: 72px;
+          z-index: 30;
+          width: 92%;
+          max-width: none;
+          border-radius: 10px;
+          padding: 10px;
+        }
+        .viewer {
+          margin: 8px;
+          border-radius: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header>
+        <h1>SVG Viewer — Door 轻量版</h1>
+        <div class="controls" id="controls">
+          <label class="btn" id="openFileBtn"
+            >选择文件<input
+              id="fileInput"
+              type="file"
+              accept=".svg,image/svg+xml"
+          /></label>
+          <button class="btn" id="pasteBtn">粘贴 SVG 文本</button>
+          <input
+            id="urlInput"
+            class="input"
+            style="min-width: 160px"
+            placeholder="粘贴 SVG 的 URL 并按回车"
+          />
+          <div class="controls-right">
+            <button class="btn" id="zoomIn">放大</button>
+            <button class="btn" id="zoomOut">缩小</button>
+            <button class="btn" id="fitView">适应大小</button>
+            <button class="btn" id="toggleSource">查看源</button>
+          </div>
+        </div>
+      </header>
 
-/* load from file */
-fileInput.addEventListener('change', async (e)=>{
-  const f = e.target.files && e.target.files[0];
-  if(!f) return;
-  try{
-    setStatus('读取文件...');
-    const txt = await f.text();
-    const doc = parseSVGText(txt);
-    sanitizeSVGDocument(doc);
-    renderSVGDocument(doc);
-  }catch(err){
-    setStatus('加载失败：' + err.message, true);
-  }
-});
+      <div class="main">
+        <div class="viewer" id="viewer" aria-label="SVG viewing area">
+          <div
+            id="placeholder"
+            style="text-align: center; color: var(--muted); padding: 20px"
+          >
+            <div style="font-size: 15px; margin-bottom: 6px; color: var(--accent);">
+              把 SVG 文件拖进来、选择文件或粘贴/输入 URL
+            </div>
+            <div class="small">
+              支持触摸拖拽、双指缩放。会自动清理脚本与事件处理器。
+            </div>
+          </div>
+          <div id="svgContainer" class="svg-wrap" style="display: none"></div>
+        </div>
 
-/* drag & drop */
-['dragover','dragenter'].forEach(ev=>{
-  viewer.addEventListener(ev,e=>{e.preventDefault(); e.dataTransfer && (e.dataTransfer.dropEffect='copy')});
-});
-viewer.addEventListener('drop', async (e)=>{
-  e.preventDefault();
-  const file = e.dataTransfer.files && e.dataTransfer.files[0];
-  if(file){
-    fileInput.files = e.dataTransfer.files;
-    const evt = new Event('change');
-    fileInput.dispatchEvent(evt);
-    return;
-  }
-  const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list');
-  if(text){
-    await loadFromTextOrUrl(text.trim());
-  }
-});
+        <aside class="toolbar" id="toolbar">
+          <div class="row">
+            <span>源（可编辑）</span>
+            <textarea
+              id="sourceArea"
+              placeholder="SVG 源会显示在这里"
+            ></textarea>
+            <div style="display: flex; gap: 8px; margin-top: 8px">
+              <button class="btn primary" id="loadSource">载入源</button>
+              <button class="btn" id="downloadClean">下载清理后 SVG</button>
+              <button class="btn" id="inlineImgs">尝试内联外部图片</button>
+              <button class="btn accent" id="clearBtn">清空</button>
+            </div>
+            <div class="status" id="status">状态：空闲</div>
+          </div>
 
-/* paste */
-pasteBtn.addEventListener('click', async ()=>{
-  try{
-    const clip = await navigator.clipboard.readText();
-    if(!clip) { setStatus('剪贴板为空', true); return; }
-    await loadFromTextOrUrl(clip.trim());
-  }catch(err){
-    setStatus('读取剪贴板失败：' + err.message, true);
-  }
-});
+          <div class="row">
+            <span>提示</span>
+            <div class="hint">
+              - 若用 URL 加载，目标必须允许跨域或返回正确的 CORS
+              头，否则无法内联外部资源。<br />
+              - 本工具会移除 &lt;script&gt;、事件处理器（on...）以及 embedded
+              JS。<br />
+              - 如果字体不对，作者没有嵌入字体或将文字转曲。<br />
+            </div>
+          </div>
+        </aside>
+      </div>
 
-/* URL input */
-urlInput.addEventListener('keydown', async (e)=>{
-  if(e.key === 'Enter'){
-    const v = urlInput.value.trim();
-    if(v) await loadFromTextOrUrl(v);
-  }
-});
+      <footer>Built for you. 不温不火但靠得住。</footer>
+    </div>
 
-/* load from text or url intelligently */
-async function loadFromTextOrUrl(input){
-  // if it looks like xml/svg
-  if(input.startsWith('<svg') || input.includes('<svg')){
-    try{
-      setStatus('解析 SVG 文本...');
-      const doc = parseSVGText(input);
-      sanitizeSVGDocument(doc);
-      renderSVGDocument(doc);
-    }catch(err){
-      setStatus('解析失败：' + err.message, true);
-    }
-    return;
-  }
-  // otherwise treat as URL
-  try{
-    setStatus('从 URL 拉取中...');
-    const res = await fetch(input, {mode: 'cors'});
-    if(!res.ok) throw new Error('网络错误 ' + res.status);
-    const txt = await res.text();
-    const doc = parseSVGText(txt);
-    sanitizeSVGDocument(doc);
-    renderSVGDocument(doc);
-  }catch(err){
-    setStatus('URL 加载失败：' + err.message, true);
-  }
-}
+    <script>
+      /* ======= SVG Viewer Core =======
+      Features:
+      - Load from file / paste / URL.
+      - Sanitize: remove script tags and on* attributes.
+      - Inline external <image href="..."> if CORS allows.
+      - Pan (single touch/mouse) and zoom (wheel / pinch).
+      - Show and edit source, then "load source" to render.
+      - Download cleaned SVG.
+      */
 
-/* load source text into viewer */
-loadSource.addEventListener('click', ()=>{
-  const txt = sourceArea.value.trim();
-  if(!txt){ setStatus('源为空', true); return; }
-  try{
-    const doc = parseSVGText(txt);
-    sanitizeSVGDocument(doc);
-    renderSVGDocument(doc);
-  }catch(err){
-    setStatus('载入失败：' + err.message, true);
-  }
-});
+      const viewer = document.getElementById("viewer");
+      const svgContainer = document.getElementById("svgContainer");
+      const placeholder = document.getElementById("placeholder");
+      const fileInput = document.getElementById("fileInput");
+      const openFileBtn = document.getElementById("openFileBtn");
+      const pasteBtn = document.getElementById("pasteBtn");
+      const urlInput = document.getElementById("urlInput");
+      const sourceArea = document.getElementById("sourceArea");
+      const loadSource = document.getElementById("loadSource");
+      const statusEl = document.getElementById("status");
+      const downloadBtn = document.getElementById("downloadClean");
+      const inlineImgsBtn = document.getElementById("inlineImgs");
+      const clearBtn = document.getElementById("clearBtn");
+      const toggleSourceBtn = document.getElementById("toggleSource");
+      const zoomInBtn = document.getElementById("zoomIn");
+      const zoomOutBtn = document.getElementById("zoomOut");
+      const fitViewBtn = document.getElementById("fitView");
 
-/* download cleaned svg */
-downloadBtn.addEventListener('click', ()=>{
-  if(!state.svgElement){ setStatus('没有可下载的 SVG', true); return; }
-  const serializer = new XMLSerializer();
-  const xml = serializer.serializeToString(state.svgElement);
-  const blob = new Blob([xml], {type:'image/svg+xml'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'cleaned.svg';
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  setStatus('已生成下载（cleaned.svg）');
-});
+      let state = {
+        scale: 1,
+        tx: 0,
+        ty: 0,
+        minScale: 0.1,
+        maxScale: 20,
+        isPanning: false,
+        lastX: 0,
+        lastY: 0,
+        pointers: new Map(),
+        svgElement: null,
+        viewBox: null,
+      };
 
-/* clear */
-clearBtn.addEventListener('click', ()=>{
-  svgContainer.innerHTML = '';
-  svgContainer.style.display = 'none';
-  placeholder.style.display = 'block';
-  sourceArea.value = '';
-  state.svgElement = null;
-  setStatus('已清空');
-});
+      function setStatus(t) {
+        statusEl.textContent = "状态：" + t;
+      }
 
-/* toggle source area visibility (simple) */
-let showSource = true;
-toggleSourceBtn.addEventListener('click', ()=>{
-  showSource = !showSource;
-  sourceArea.style.display = showSource ? 'block' : 'none';
-  setStatus(showSource ? '显示源' : '隐藏源');
-});
+      /* sanitization: remove script nodes and attributes starting with "on" */
+      function sanitizeSVGDocument(doc) {
+        // remove <script> and <foreignObject> (foreignObject may contain HTML/JS)
+        const scripts = doc.querySelectorAll("script");
+        scripts.forEach((n) => n.remove());
+        const foreign = doc.querySelectorAll("foreignObject");
+        foreign.forEach((n) => n.remove());
 
-/* attempt to inline external images (<image href="...">) */
-inlineImgsBtn.addEventListener('click', async ()=>{
-  if(!state.svgElement){ setStatus('先加载一个 SVG', true); return; }
-  setStatus('尝试内联外部图片...');
-  try{
-    // operate on current source text
-    let serializer = new XMLSerializer();
-    let xml = serializer.serializeToString(state.svgElement);
-    let doc = parseSVGText(xml);
-    const images = Array.from(doc.querySelectorAll('image'));
-    if(images.length === 0) { setStatus('没有 <image> 标记需要内联'); return; }
-    // for each image, try fetch
-    for(const img of images){
-      const href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink','href');
-      if(!href) continue;
-      if(href.startsWith('data:')) continue; // already inline
-      try{
-        const res = await fetch(href, {mode:'cors'});
-        if(!res.ok) throw new Error('fetch fail ' + res.status);
-        const blob = await res.blob();
-        const reader = new FileReader();
-        const dataUrl = await new Promise((resolve,reject)=>{
-          reader.onload = ()=>resolve(reader.result);
-          reader.onerror = ()=>reject(new Error('读取失败'));
-          reader.readAsDataURL(blob);
+        // remove attributes that start with "on"
+        const all = doc.querySelectorAll("*");
+        all.forEach((el) => {
+          [...el.attributes].forEach((attr) => {
+            if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
+            // remove javascript: hrefs
+            if (
+              attr.value &&
+              typeof attr.value === "string" &&
+              attr.value.trim().toLowerCase().startsWith("javascript:")
+            ) {
+              el.removeAttribute(attr.name);
+            }
+          });
         });
-        img.setAttribute('href', dataUrl);
-      }catch(err){
-        // cannot fetch due to CORS or network; keep original
-        console.warn('无法内联', href, err);
+
+        return doc;
       }
-    }
-    // finished
-    sanitizeSVGDocument(doc);
-    renderSVGDocument(doc);
-    setStatus('内联尝试完成（若部分图片因 CORS 未内联，保留原路径）');
-  }catch(err){
-    setStatus('内联失败：' + err.message, true);
-  }
-});
 
-/* zoom controls */
-zoomInBtn.addEventListener('click', ()=>{ setScale(state.scale * 1.2); });
-zoomOutBtn.addEventListener('click', ()=>{ setScale(state.scale / 1.2); });
-fitViewBtn.addEventListener('click', adjustFit);
+      /* parse text to SVGDocument */
+      function parseSVGText(text) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "image/svg+xml");
+        // check for parsererror
+        if (doc.querySelector("parsererror"))
+          throw new Error("解析失败：不是合法的 SVG");
+        return doc;
+      }
 
-function setScale(s){
-  s = Math.max(state.minScale, Math.min(state.maxScale, s));
-  state.scale = s;
-  applyTransform();
-}
+      /* render sanitized svg doc into viewer */
+      function renderSVGDocument(doc) {
+        const svg = doc.documentElement;
+        // reset transform state
+        state.scale = 1;
+        state.tx = 0;
+        state.ty = 0;
+        state.svgElement = svg;
+        // clear container
+        svgContainer.innerHTML = "";
+        svgContainer.style.display = "inline-block";
+        // clone node to avoid weirdness
+        const imported = document.importNode(svg, true);
+        // ensure width/height or viewBox exists
+        if (!imported.hasAttribute("viewBox")) {
+          // try set viewBox from width/height if present
+          const w = imported.getAttribute("width");
+          const h = imported.getAttribute("height");
+          if (w && h) {
+            const wi = parseFloat(w);
+            const hi = parseFloat(h);
+            if (!isNaN(wi) && !isNaN(hi)) {
+              imported.setAttribute("viewBox", `0 0 ${wi} ${hi}`);
+            }
+          }
+        }
+        svgContainer.appendChild(imported);
+        svgContainer.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+        adjustFit();
+        placeholder.style.display = "none";
+        setStatus("已加载");
+        sourceArea.value = new XMLSerializer().serializeToString(svg);
+      }
 
-/* transform apply */
-function applyTransform(){
-  svgContainer.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
-}
+      /* load from file */
+      fileInput.addEventListener("change", async (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        try {
+          setStatus("读取文件...");
+          const txt = await f.text();
+          const doc = parseSVGText(txt);
+          sanitizeSVGDocument(doc);
+          renderSVGDocument(doc);
+        } catch (err) {
+          setStatus("加载失败：" + err.message);
+        }
+      });
 
-/* fit to viewer */
-function adjustFit(){
-  if(!state.svgElement) return;
-  const svgEl = svgContainer.querySelector('svg') || state.svgElement;
-  const vb = svgEl.getAttribute('viewBox');
-  let vbw=0,vbh=0;
-  if(vb){
-    const parts = vb.split(/\s+|,/).filter(Boolean);
-    vbw = parseFloat(parts[2]); vbh = parseFloat(parts[3]);
-  } else {
-    vbw = parseFloat(svgEl.getAttribute('width') || svgEl.clientWidth || 300);
-    vbh = parseFloat(svgEl.getAttribute('height') || svgEl.clientHeight || 150);
-  }
-  const vpw = viewer.clientWidth - 24; // padding/margins
-  const vph = viewer.clientHeight - 24;
-  if(vbw <= 0 || vbh <= 0) { setStatus('无法计算视图大小，使用默认比例'); return; }
-  const scale = Math.min(vpw / vbw, vph / vbh) * 0.95;
-  state.scale = Math.max(state.minScale, Math.min(state.maxScale, scale));
-  // center
-  const cx = (vpw - vbw * state.scale) / 2;
-  const cy = (vph - vbh * state.scale) / 2;
-  state.tx = cx;
-  state.ty = cy;
-  applyTransform();
-}
+      /* drag & drop */
+      ["dragover", "dragenter"].forEach((ev) => {
+        viewer.addEventListener(ev, (e) => {
+          e.preventDefault();
+          e.dataTransfer && (e.dataTransfer.dropEffect = "copy");
+        });
+      });
+      viewer.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file) {
+          fileInput.files = e.dataTransfer.files;
+          const evt = new Event("change");
+          fileInput.dispatchEvent(evt);
+          return;
+        }
+        const text =
+          e.dataTransfer.getData("text/plain") ||
+          e.dataTransfer.getData("text/uri-list");
+        if (text) {
+          await loadFromTextOrUrl(text.trim());
+        }
+      });
 
-/* Pointer / Touch handling for pan & pinch */
-viewer.addEventListener('pointerdown', (e)=>{
-  viewer.setPointerCapture(e.pointerId);
-  state.pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-});
+      /* paste */
+      pasteBtn.addEventListener("click", async () => {
+        try {
+          const clip = await navigator.clipboard.readText();
+          if (!clip) {
+            setStatus("剪贴板为空");
+            return;
+          }
+          await loadFromTextOrUrl(clip.trim());
+        } catch (err) {
+          setStatus("读取剪贴板失败：" + err.message);
+        }
+      });
 
-viewer.addEventListener('pointermove', (e)=>{
-  if(!state.pointers.has(e.pointerId)) return;
-  state.pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-  if(state.pointers.size === 1){
-    // pan
-    const p = Array.from(state.pointers.values())[0];
-    if(state.isPanning === false){
-      state.isPanning = true;
-      state.lastX = p.x; state.lastY = p.y;
-    } else {
-      const dx = p.x - state.lastX;
-      const dy = p.y - state.lastY;
-      state.tx += dx; state.ty += dy;
-      state.lastX = p.x; state.lastY = p.y;
-      applyTransform();
-    }
-  } else if(state.pointers.size === 2){
-    // pinch zoom
-    const pts = Array.from(state.pointers.values());
-    const p0 = pts[0], p1 = pts[1];
-    const curDist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-    if(!state._pinchStart){
-      state._pinchStart = {dist: curDist, scale: state.scale, center: {x:(p0.x+p1.x)/2, y:(p0.y+p1.y)/2}};
-    } else {
-      const ratio = curDist / state._pinchStart.dist;
-      const newScale = Math.max(state.minScale, Math.min(state.maxScale, state._pinchStart.scale * ratio));
-      // zoom about pinch center: adjust tx/ty
-      const rect = viewer.getBoundingClientRect();
-      const cx = state._pinchStart.center.x - rect.left;
-      const cy = state._pinchStart.center.y - rect.top;
-      // transform movement math:
-      // newTx = (oldTx) - (cx)*(newScale-oldScale)
-      state.tx = state.tx - (cx) * (newScale - state.scale);
-      state.ty = state.ty - (cy) * (newScale - state.scale);
-      state.scale = newScale;
-      applyTransform();
-    }
-  }
-});
+      /* URL input */
+      urlInput.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter") {
+          const v = urlInput.value.trim();
+          if (v) await loadFromTextOrUrl(v);
+        }
+      });
 
-viewer.addEventListener('pointerup', (e)=>{
-  viewer.releasePointerCapture && viewer.releasePointerCapture(e.pointerId);
-  state.pointers.delete(e.pointerId);
-  state.isPanning = false;
-  state._pinchStart = null;
-});
+      /* load from text or url intelligently */
+      async function loadFromTextOrUrl(input) {
+        // if it looks like xml/svg
+        if (input.startsWith("<svg") || input.includes("<svg")) {
+          try {
+            setStatus("解析 SVG 文本...");
+            const doc = parseSVGText(input);
+            sanitizeSVGDocument(doc);
+            renderSVGDocument(doc);
+          } catch (err) {
+            setStatus("解析失败：" + err.message);
+          }
+          return;
+        }
+        // otherwise treat as URL
+        try {
+          setStatus("从 URL 拉取中...");
+          const res = await fetch(input, { mode: "cors" });
+          if (!res.ok) throw new Error("网络错误 " + res.status);
+          const txt = await res.text();
+          const doc = parseSVGText(txt);
+          sanitizeSVGDocument(doc);
+          renderSVGDocument(doc);
+        } catch (err) {
+          setStatus("URL 加载失败：" + err.message);
+        }
+      }
 
-viewer.addEventListener('pointercancel', (e)=>{
-  state.pointers.delete(e.pointerId);
-  state.isPanning = false;
-  state._pinchStart = null;
-});
+      /* load source text into viewer */
+      loadSource.addEventListener("click", () => {
+        const txt = sourceArea.value.trim();
+        if (!txt) {
+          setStatus("源为空");
+          return;
+        }
+        try {
+          const doc = parseSVGText(txt);
+          sanitizeSVGDocument(doc);
+          renderSVGDocument(doc);
+        } catch (err) {
+          setStatus("载入失败：" + err.message);
+        }
+      });
 
-/* wheel to zoom (desktop) */
-viewer.addEventListener('wheel', (e)=>{
-  e.preventDefault();
-  const delta = -e.deltaY;
-  const factor = delta > 0 ? 1.08 : 1/1.08;
-  // zoom at mouse pos
-  const rect = viewer.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const newScale = Math.max(state.minScale, Math.min(state.maxScale, state.scale * factor));
-  state.tx = state.tx - (mx) * (newScale - state.scale);
-  state.ty = state.ty - (my) * (newScale - state.scale);
-  state.scale = newScale;
-  applyTransform();
-}, {passive:false});
+      /* download cleaned svg */
+      downloadBtn.addEventListener("click", () => {
+        if (!state.svgElement) {
+          setStatus("没有可下载的 SVG");
+          return;
+        }
+        const serializer = new XMLSerializer();
+        const xml = serializer.serializeToString(state.svgElement);
+        const blob = new Blob([xml], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "cleaned.svg";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setStatus("已生成下载（cleaned.svg）");
+      });
 
-/* keyboard shortcuts (desktop) */
-window.addEventListener('keydown', (e)=>{
-  if(e.key === '+' || e.key === '=' ) setScale(state.scale * 1.2);
-  if(e.key === '-') setScale(state.scale / 1.2);
-});
+      /* clear */
+      clearBtn.addEventListener("click", () => {
+        svgContainer.innerHTML = "";
+        svgContainer.style.display = "none";
+        placeholder.style.display = "block";
+        sourceArea.value = "";
+        state.svgElement = null;
+        setStatus("已清空");
+      });
 
-/* small UX: click empty space to hide source on mobile */
-document.addEventListener('click', (e)=>{
-  // nothing intrusive
-});
+      /* toggle source area visibility (simple) */
+      let showSource = true;
+      toggleSourceBtn.addEventListener("click", () => {
+        showSource = !showSource;
+        sourceArea.style.display = showSource ? "block" : "none";
+        setStatus(showSource ? "显示源" : "隐藏源");
+      });
 
-/* initial */
-setStatus('就绪。拖入文件、粘贴或输入 URL 即可。');
+      /* attempt to inline external images (<image href="...">) */
+      inlineImgsBtn.addEventListener("click", async () => {
+        if (!state.svgElement) {
+          setStatus("先加载一个 SVG");
+          return;
+        }
+        setStatus("尝试内联外部图片...");
+        try {
+          // operate on current source text
+          let serializer = new XMLSerializer();
+          let xml = serializer.serializeToString(state.svgElement);
+          let doc = parseSVGText(xml);
+          const images = Array.from(doc.querySelectorAll("image"));
+          if (images.length === 0) {
+            setStatus("没有 <image> 标记需要内联");
+            return;
+          }
+          // for each image, try fetch
+          for (const img of images) {
+            const href =
+              img.getAttribute("href") ||
+              img.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+            if (!href) continue;
+            if (href.startsWith("data:")) continue; // already inline
+            try {
+              const res = await fetch(href, { mode: "cors" });
+              if (!res.ok) throw new Error("fetch fail " + res.status);
+              const blob = await res.blob();
+              const reader = new FileReader();
+              const dataUrl = await new Promise((resolve, reject) => {
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error("读取失败"));
+                reader.readAsDataURL(blob);
+              });
+              img.setAttribute("href", dataUrl);
+            } catch (err) {
+              // cannot fetch due to CORS or network; keep original
+              console.warn("无法内联", href, err);
+            }
+          }
+          // finished
+          sanitizeSVGDocument(doc);
+          renderSVGDocument(doc);
+          setStatus("内联尝试完成（若部分图片因 CORS 未内联，保留原路径）");
+        } catch (err) {
+          setStatus("内联失败：" + err.message);
+        }
+      });
 
-</script>
-</body>
+      /* zoom controls */
+      zoomInBtn.addEventListener("click", () => {
+        setScale(state.scale * 1.2);
+      });
+      zoomOutBtn.addEventListener("click", () => {
+        setScale(state.scale / 1.2);
+      });
+      fitViewBtn.addEventListener("click", adjustFit);
+
+      function setScale(s) {
+        s = Math.max(state.minScale, Math.min(state.maxScale, s));
+        state.scale = s;
+        applyTransform();
+      }
+
+      /* transform apply */
+      function applyTransform() {
+        svgContainer.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+      }
+
+      /* fit to viewer */
+      function adjustFit() {
+        if (!state.svgElement) return;
+        // center
+        state.tx = 0;
+        state.ty = 0;
+        applyTransform();
+      }
+
+      /* Pointer / Touch handling for pan & pinch */
+      viewer.addEventListener("pointerdown", (e) => {
+        viewer.setPointerCapture(e.pointerId);
+        state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      });
+
+      viewer.addEventListener("pointermove", (e) => {
+        if (!state.pointers.has(e.pointerId)) return;
+        state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (state.pointers.size === 1) {
+          // pan
+          const p = Array.from(state.pointers.values())[0];
+          if (state.isPanning === false) {
+            state.isPanning = true;
+            state.lastX = p.x;
+            state.lastY = p.y;
+          } else {
+            const dx = p.x - state.lastX;
+            const dy = p.y - state.lastY;
+            state.tx += dx;
+            state.ty += dy;
+            state.lastX = p.x;
+            state.lastY = p.y;
+            applyTransform();
+          }
+        } else if (state.pointers.size === 2) {
+          // pinch zoom
+          const pts = Array.from(state.pointers.values());
+          const p0 = pts[0],
+            p1 = pts[1];
+          const curDist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+          if (!state._pinchStart) {
+            state._pinchStart = {
+              dist: curDist,
+              scale: state.scale,
+              center: { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 },
+            };
+          } else {
+            const ratio = curDist / state._pinchStart.dist;
+            const newScale = Math.max(
+              state.minScale,
+              Math.min(state.maxScale, state._pinchStart.scale * ratio)
+            );
+            // zoom about pinch center: adjust tx/ty
+            const rect = viewer.getBoundingClientRect();
+            const cx = state._pinchStart.center.x - rect.left;
+            const cy = state._pinchStart.center.y - rect.top;
+            // transform movement math:
+            // newTx = (oldTx) - (cx)*(newScale-oldScale)
+            state.tx = state.tx - cx * (newScale - state.scale);
+            state.ty = state.ty - cy * (newScale - state.scale);
+            state.scale = newScale;
+            applyTransform();
+          }
+        }
+      });
+
+      viewer.addEventListener("pointerup", (e) => {
+        viewer.releasePointerCapture &&
+          viewer.releasePointerCapture(e.pointerId);
+        state.pointers.delete(e.pointerId);
+        state.isPanning = false;
+        state._pinchStart = null;
+      });
+
+      viewer.addEventListener("pointercancel", (e) => {
+        state.pointers.delete(e.pointerId);
+        state.isPanning = false;
+        state._pinchStart = null;
+      });
+
+      /* wheel to zoom (desktop) */
+      viewer.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          const delta = -e.deltaY;
+          const factor = delta > 0 ? 1.08 : 1 / 1.08;
+          // zoom at mouse pos
+          const rect = viewer.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          const newScale = Math.max(
+            state.minScale,
+            Math.min(state.maxScale, state.scale * factor)
+          );
+          state.tx = state.tx - mx * (newScale - state.scale);
+          state.ty = state.ty - my * (newScale - state.scale);
+          state.scale = newScale;
+          applyTransform();
+        },
+        { passive: false }
+      );
+
+      /* keyboard shortcuts (desktop) */
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "+" || e.key === "=") setScale(state.scale * 1.2);
+        if (e.key === "-") setScale(state.scale / 1.2);
+      });
+
+      /* small UX: click empty space to hide source on mobile */
+      document.addEventListener("click", (e) => {
+        // nothing intrusive
+      });
+
+      /* initial */
+      setStatus("就绪。拖入文件、粘贴或输入 URL 即可。");
+    </script>
+  </body>
 </html>
