@@ -1,4 +1,4 @@
-@media (max-width: 800px) {
+@media (max-width: 768px) {
   .app {
     padding: 0 5px;
   }
@@ -22,8 +22,9 @@
     padding: 5px 10px;
   }
   .main {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 240px) minmax(0, 1fr);
+    flex: none;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 320px) 1fr;
     padding: 5px 35px;
     gap: 0;
   }
