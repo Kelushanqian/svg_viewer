@@ -1,0 +1,42 @@
+@media (max-width: 800px) {
+  .app {
+    padding: 0 5px;
+  }
+  header {
+    flex-direction: column;
+    gap: 0;
+  }
+  h1 {
+    width: 100%;
+    text-align: center;
+    border-bottom: 1px solid var(--accent);
+  }
+  .controls {
+    justify-content: center;
+    gap: 5px;
+  }
+  .btn {
+    padding: 0 4px;
+  }
+  .input {
+    padding: 5px 10px;
+  }
+  .main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 240px) minmax(0, 1fr);
+    padding: 5px 35px;
+    gap: 0;
+  }
+  .viewer {
+    border-right: none;
+  }
+  .toolbar {
+    padding: 3px 0;
+  }
+  textarea {
+    height: 120px;
+  }
+  .row {
+    border-top: 1px solid var(--accent);
+  }
+}
